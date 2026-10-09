@@ -1,0 +1,481 @@
+---
+title: "SDS 4130 - Linear Statistical Models"
+author: "Andrew Aviado, Josh Houston, David Moriarty, Ethan Engelman, Will Grudzinski"
+subtitle: 'Final Group Project: Draft Picks Analytics'
+output:
+  word_document: default
+  pdf_document: default
+fontsize: 11pt
+header-includes:
+- \usepackage{hyperref}
+- \hypersetup{pdfpagemode={UseNone}, pdfstartview=}
+- \usepackage{amsthm}
+- \theoremstyle{definition}
+- \newtheorem{problem}{Problem}
+editor_options:
+  markdown:
+    wrap: sentence
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(fig.align = "center", fig.height = 4, fig.width = 5)
+knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 68), tidy = TRUE)
+knitr::opts_chunk$set(message = FALSE)
+set.seed(0)
+```
+
+\problem 
+
+\textit{Proof}.
+```{r}
+# Step 1
+library(dplyr)
+
+draft <- read.csv("nba_data1.csv")
+
+# Rename columns for easy naming
+names(draft)[names(draft) == "Average.WS.36"]   <- "WS36"
+names(draft)[names(draft) == "Draft.Pick"]      <- "Pk"
+names(draft)[names(draft) == "Traditional.route..1.if.yes."] <- "trad"
+names(draft)[names(draft) == "Draft.Class"]     <- "draft_yr"
+names(draft)[names(draft) == "Age.at.Draft"]    <- "Age"
+names(draft)[names(draft) == "HS..Top.25.School..1.yes..0.otherwise."] <- "HS"
+names(draft)[names(draft) == "Wingspan..in..at.DRAFT"] <- "Wingspan"
+names(draft)[names(draft) == "Height..in..AT.DRAFT"]   <- "Height"
+names(draft)[names(draft) == "Max.Vertical..1.if.Player.had.Vertical...36.in..0.otherwise"] <- "MaxVert"
+names(draft)[names(draft) == "Guard..1."]  <- "Guard"
+names(draft)[names(draft) == "Wing.0."]    <- "Wing"
+names(draft)[names(draft) == "TS."]        <- "TS"
+names(draft)[names(draft) == "AST.TOV"]    <- "ASTTOV"
+names(draft)[names(draft) == "REB.36"]     <- "REB36"
+names(draft)[names(draft) == "STL.36"]     <- "STL36"
+
+
+# Draft indicator: 1 = international, 0 = college
+draft$intl      <- ifelse(draft$trad == 0, 1, 0)
+draft$WingRatio <- draft$Wingspan / draft$Height
+draft_college <- draft %>% filter(trad == 1)
+
+
+# International players represent ~24% of the combined sample across all three draft classes
+table(draft$intl, draft$draft_yr)
+prop.table(table(draft$intl))
+
+# Summarize WS/36 by group
+tapply(draft$WS36, draft$intl, summary)
+
+# Conduct the t-test
+t.test(WS36 ~ intl, data = draft)
+
+```
+Interpretation: A Welch two-sample t-test was conducted to test $H_0: \mu_{\text{college}} = \mu_{\text{international}}$. We reject $H_0$ at the 0.05 level ($t = 2.1826$, $df = 75.967$, $p = 0.03216$). College players produced a higher mean WS/36 (0.042) than international players (0.027), and this difference is statistically significant. The 95% confidence interval for the difference is (0.001, 0.029), which lies entirely above zero, consistent with college players producing meaningfully higher WS/36 than international players across the three draft classes.
+
+```{r}
+# Histogram Plotting
+hist(draft$WS36, main = "WS/36 Distribution", xlab = "WS/36", col = "lightblue", breaks = 20)
+
+
+```
+The histogram shows WS/36 is roughly symmetric with light tails on both sides, centered around 0.04. The tall spike at zero reflects players with limited or no rookie minutes across all three draft classes, whose WS/36 collapses to zero rather than reflecting true on-court performance.
+
+```{r}
+# Scatter Plot
+plot(WS36 ~ Pk, data = draft, main = "WS/36 vs Pick", xlab = "Pick", ylab = "WS/36", pch = 19)
+abline(lm(WS36 ~ Pk, data = draft), col = "red")
+
+```
+Interpretation: The scatterplot of WS/36 vs pick number shows a very weak negative trend across 173 players.
+Earlier picks tend to produce slightly higher WS/36, but the high variance across all picks suggests pick number alone is a weak predictor of rookie success.
+
+
+```{r}
+# Boxplot:
+boxplot(WS36 ~ intl, data = draft, names = c("College", "International"), main = "WS/36 by Origin", ylab = "WS/36", xlab = "")
+
+```
+Interpretation: The boxplot aligns with the t-test result. College players have a higher median WS/36 and wider spread than international players, whose distribution is more compressed near zero. Both groups contain outliers, including one international player near 0.16, which may warrant further investigation as influential points in later steps. 
+
+```{r}
+# Numerical summary of key variables
+summary(draft_college[, c("WS36", "Age", "TS", "ASTTOV", "REB36", 
+                           "STL36", "WingRatio", "MaxVert")])
+
+
+```
+
+
+```{r}
+# Sort key variables to check for suspicious values
+sort(draft_college$WS36)
+sort(draft_college$Age)
+sort(draft_college$TS)
+sort(draft_college$ASTTOV)
+sort(draft_college$REB36)
+sort(draft_college$STL36)
+sort(draft_college$WingRatio)
+sort(draft_college$MaxVert)
+
+```
+Interpretation:The sorted values look clean overall, nothing jumps out as a data entry error. The minimum TS% is 38.6, the minimum Age is 18.5, and WS/36 runs from about −0.088 to 0.142, which are all reasonable numbers for college players entering the draft. The one thing I noticed is that there are five players with a WS/36 of exactly zero, which probably just means those guys barely played in the NBA during their first two seasons rather than a real performance number. These aren't bad data points but they're worth keeping in mind for the outlier and influence steps later on.
+
+
+```{r}
+plot(WS36 ~ Age,       data = draft_college, main = "WS/36 vs Age",        xlab = "Age",        ylab = "WS/36")
+plot(WS36 ~ TS,        data = draft_college, main = "WS/36 vs TS%",        xlab = "TS%",        ylab = "WS/36")
+plot(WS36 ~ ASTTOV,    data = draft_college, main = "WS/36 vs AST/TOV",    xlab = "AST/TOV",    ylab = "WS/36")
+plot(WS36 ~ REB36,     data = draft_college, main = "WS/36 vs REB/36",     xlab = "REB/36",     ylab = "WS/36")
+plot(WS36 ~ STL36,     data = draft_college, main = "WS/36 vs STL/36",     xlab = "STL/36",     ylab = "WS/36")
+plot(WS36 ~ WingRatio, data = draft_college, main = "WS/36 vs Wing Ratio", xlab = "Wing Ratio", ylab = "WS/36")
+plot(WS36 ~ MaxVert,   data = draft_college, main = "WS/36 vs Max Vert",   xlab = "Max Vert",   ylab = "WS/36")
+
+```
+
+\qed
+
+
+
+
+\problem 
+
+\textit{Proof}.
+```{r}
+# Step 2:Fit the full multiple linear regression model
+
+draft_model <- lm(WS36 ~ Age + TS + ASTTOV + REB36 + STL36 + HS +
+                    WingRatio + MaxVert + Guard + Wing,
+                  data = draft_college)
+summary(draft_model)
+
+
+
+```
+
+Interpretation: The full model has an R^2 of 32.18% and an adjusted R^2 of 26.58%, so the predictors together explain roughly a third of the variation in WS/36. The overall F-test is highly significant (F = 5.742, p = 5.06e-07), which tells us the model as a whole does substantially better than just predicting the mean. Looking at individual predictors, REB/36 clears the 0.05 cutoff very strongly (p = 8.86e-06) with a coefficient of about 0.010, meaning a player who grabbed one extra rebound per 36 minutes in college is expected to add roughly 0.010 to his WS/36, holding everything else fixed. MaxVert also clears the 0.05 threshold (p = 0.034) with a positive coefficient of about 0.017, suggesting players with a vertical of 36 inches or more average about 0.017 higher WS/36 than those below. TS is marginally significant (p = 0.055) with a positive coefficient of 0.0015, suggesting shooting efficiency may matter but does not quite clear the 0.05 threshold. A few coefficients went the opposite direction from what I'd expect. WingRatio came in negative (-0.218), which is strange since longer wingspans usually help, but it's not significant so it's probably noise. The residual standard error is 0.037 so the model's typical miss on a player's WS/36 is about 0.037 units, which is still fairly large relative to the spread of the response. The signs on REB/36, AST/TOV, MaxVert, HS, Age, and STL/36 are all positive, which makes sense since better rebounding, ball control, athleticism, high school prestige, maturity, and defensive production should all help performance. The Guard coefficient is only 0.002 and not significant, which is weaker than we might have expected, but this makes sense because averaging across two years gives guards more time to grow into rotation roles relative to bigs.
+
+```{r}
+plot(draft_model)
+```
+Interpretation: The Residuals vs Fitted plot has points scattered pretty evenly around zero without any funnel shape, so the constant variance assumption looks fine. The red smoother is mostly flat with only small wiggles, so there is not really any concerning nonlinearity either. A few points stand out from the rest, with observations 42 and 116 sitting noticeably above zero and observation 76 sitting well below. The Q-Q plot follows the diagonal line closely through the middle but pulls off at both ends. Observation 76 drops below the line in the lower tail and observations 42 and 9 sit above the line in the upper tail, so the residuals have slightly heavier tails than a normal distribution. The Scale-Location plot has a mild upward slope in the smoother but the spread of points does not really widen with fitted values, which lines up with the Residuals vs Fitted plot and suggests heteroscedasticity is not a real concern. Observations 9, 76, and 42 show up again as the points furthest from the rest. The Residuals vs Leverage plot flags observation 25 as the highest leverage point at around 0.21, along with observations 9 and 42, which have large standardized residuals near 2 to 2.5 but at more moderate leverage. No points cross the Cook's distance line, so none of these stand out as extremely influential on their own. Overall, the linearity and constant variance assumptions seem fine, normality is a little off in both tails, and observations 9, 25, 42, 76, and 116 are the ones worth looking at more in the next steps.
+
+
+\qed
+
+
+\problem 
+
+\textit{Proof}.
+```{r}
+# Step 3
+
+# Check what the column is actually named
+
+
+
+```
+
+Interpretation: 
+
+\qed
+
+
+\problem 
+
+\textit{Proof}.
+```{r}
+# Step 4
+
+library(MASS)
+library(dplyr)
+
+draft_pos <- draft_college %>% filter(WS36 > 0)
+
+g <- lm(WS36 ~ Age + TS + ASTTOV + REB36 + STL36 + HS +
+          WingRatio + MaxVert + Guard + Wing, data = draft_pos)
+
+boxcox(g, plotit = T)
+boxcox(g, plotit = T, lambda = seq(-1, 1, by = 0.05))
+
+# Square root transformation (lambda = 0.5, inside the 95% CI)
+g2 <- lm(sqrt(WS36) ~ Age + TS + ASTTOV + REB36 + STL36 + HS +
+           WingRatio + MaxVert + Guard + Wing, data = draft_pos)
+summary(g2)
+
+# Compare original vs transformed diagnostics (matches Galapagos slide 19)
+par(mfrow = c(1,2))
+plot(fitted(g),  residuals(g),  xlab = "Fitted", ylab = "Residuals",
+     main = "Original Response")
+plot(fitted(g),  rstudent(g),   xlab = "Fitted", ylab = "R-student Residuals",
+     main = "Original Response")
+
+par(mfrow = c(1,2))
+plot(fitted(g2), residuals(g2), xlab = "Fitted", ylab = "Residuals",
+     main = "Square Root Response")
+plot(fitted(g2), rstudent(g2),  xlab = "Fitted", ylab = "R-student Residuals",
+     main = "Square Root Response")
+par(mfrow = c(1,1))
+
+# Normality check before vs after
+shapiro.test(residuals(g))
+shapiro.test(residuals(g2))
+
+
+```
+
+Interpretation: Box-Cox requires a positive response so the 24 players with WS/36 less than or equal to 0 were discarded, leaving 108 of the original 132 players. The full model was refit on this positive subset and the boxcox function from the MASS package was applied. The first plot was too broad so the range of lambda was narrowed in the second plot to read the CI more easily. We found the 95% CI for lambda goes from about 0.35 to 0.80 with the peak at around 0.55. The cleanest and simplest lambda inside the CI is 0.5 so a square root transformation was applied.
+For (a) constant variance.
+For (b) normality.
+One thing worth noting is that the square root model has an R-squared of 0.3127 which is similar to the original OLS fit on the same positive subset. Looking at which predictors come out significant, REB/36 stays strongly significant (p = 6.31e-05) and MaxVert stays significant (p = 0.0139), while TS was marginal in the original full model (p = 0.055) and drops out here (p = 0.131). So the transformation's main payoff is the normality fix rather than any big shift in which predictors matter.
+\qed
+
+
+\problem 
+
+\textit{Proof}.
+```{r}
+# Step 5
+
+library(MASS)
+library(dplyr)
+library(nlme)
+library(lmtest)
+
+#Filter to traditional route players only
+draft_trad <- draft[draft$trad == 1, ]
+
+#Wing Height Ratio Variable
+draft_trad$WingHeightRatio <- draft_trad$Wingspan / draft_trad$Height
+
+# Sort by draft year then pick number
+draft_sorted <- draft_trad[order(draft_trad$draft_yr, draft_trad$Pk), ]
+
+# Refit OLS on sorted data
+ols_sorted <- lm(WS36 ~ Age + MaxVert + WingHeightRatio + Guard + Wing + TS + ASTTOV + REB36 + STL36 + HS, data = draft_sorted)
+
+# Check for serial correlation - two plots
+par(mfrow = c(1, 2))
+plot(resid(ols_sorted), type = "l", main = "Residuals vs Index",
+     xlab = "Index", ylab = "Residuals")
+abline(h = 0, col = "red")
+acf(resid(ols_sorted), main = "Residuals ACF")
+
+# Formal test
+dwtest(ols_sorted)
+```
+
+Interpretation: 
+
+To investigate serial correlation, the data was sorted by draft year and then by draft pick number within each year, so that observations follow a natural chronological ordering. The full model was refit on this sorted dataset using OLS, and the residuals were examined in three ways.
+
+The Residuals vs Index plot shows the residuals oscillating rapidly and randomly around zero with no discernible trend, wave-like pattern, or clustering. This is consistent with independent errors.
+
+The ACF plot confirms this, as all autocorrelation values at lags 1 through 21 fall well within the blue 95% confidence bands, indicating no statistically meaningful correlation between residuals at any lag.
+
+The Durbin-Watson test yields DW = 2.1477 with a p-value of 0.8078. Since the DW statistic is very close to 2 (the value expected under no serial correlation) and the p-value is far above any conventional significance level, we fail to reject the null hypothesis of no serial correlation.
+
+All three diagnostics provide consistent and strong evidence that serial correlation is not present in the residuals of this model. The OLS estimates are therefore not compromised by this issue, and a GLS correction, while applied as a precaution, is not strictly necessary here.
+
+```{r}
+# GLS correction
+gls_model <- gls(WS36 ~ Age + MaxVert + WingHeightRatio + Guard + Wing + TS + ASTTOV + REB36 + STL36 + HS, data = draft_sorted, correlation = corAR1(form = ~1), method = "ML")
+
+summary(gls_model)
+intervals(gls_model)
+```
+
+Interpretation: (don't really need GLS, will check with Prof)
+
+As a precautionary correction for potential serial correlation, a Generalized Least Squares (GLS) model was fit with an AR(1) correlation structure using Maximum Likelihood estimation.
+
+AR(1) Correlation Structure (Phi):
+The estimated AR(1) parameter is phi = -0.098, with a 95% confidence interval of (-0.283, 0.094). Since this interval contains zero, there is no statistically significant autocorrelation structure in the residuals, confirming the Durbin-Watson result. The small negative phi suggests if anything a very slight alternating pattern, but this is negligible.
+
+Coefficient Estimates:
+The GLS estimates are virtually identical to the OLS estimates, which is expected given the absence of serial correlation. REB36 remains the only statistically significant predictor (p = 0.0001), with a positive estimate of 0.00850 — meaning that each additional rebound per 36 minutes is associated with higher win shares efficiency among traditional-route players, holding all else constant. All other predictors have p-values well above 0.05.
+
+Model Fit:
+The residual standard error is 0.0369 (95% CI: 0.0327, 0.0417), and the model yields an AIC of -475.36, BIC of -437.79, and log-likelihood of 250.68.
+
+Overall conclusion: The GLS correction did not meaningfully alter any estimates or conclusions relative to OLS, further reinforcing that serial correlation is not a concern in this dataset.
+
+\qed
+
+
+\problem 
+
+\textit{Proof}.
+```{r}
+# Step 6: Weighted Least Squares
+
+# Group by REB36 bins to estimate variance structure
+draft_college$reb_grp <- cut(draft_college$REB36, breaks = 5)
+
+grp_stats <- tapply(draft_college$WS36, draft_college$reb_grp, function(x) 
+  c(mean = mean(x), var = var(x)))
+
+grp_mean <- sapply(grp_stats, function(x) x["mean"])
+grp_var  <- sapply(grp_stats, function(x) x["var"])
+
+# Regress group variances on group means (Topic 15 slide 40)
+var_model <- lm(grp_var ~ grp_mean)
+summary(var_model)
+
+# Estimate weights for each observation
+var_hat <- var_model$coef[1] + var_model$coef[2] * draft_college$REB36
+var_hat <- pmax(var_hat, 1e-6)  # avoid zero/negative weights
+w <- 1 / var_hat
+
+# Fit WLS model
+fit_wls <- lm(WS36 ~ Age + TS + ASTTOV + REB36 + STL36 + HS + 
+              WingRatio + MaxVert + Guard + Wing,
+              data = draft_college, weights = w)
+summary(fit_wls)
+
+# Compare OLS vs WLS coefficients
+round(cbind(OLS = coef(draft_model), WLS = coef(fit_wls)), 6)
+
+# Plot weighted residuals vs weighted fitted values (Topic 15 slide 44)
+plot(sqrt(w) * fitted(fit_wls), sqrt(w) * residuals(fit_wls),
+     xlab = expression(w^{1/2} * hat(y)),
+     ylab = expression(w^{1/2} * e),
+     main = "Weighted Residuals vs Weighted Fitted")
+abline(h = 0, lty = 2)
+
+
+
+```
+
+Interpretation: The variance regression of group-level sample variances on group-level REB36 means produced a slope of $-0.0032$ with $p = 0.881$ and $R^2 = 0.009$, indicating no meaningful linear relationship between 
+the variance of WS/36 and REB36. The weights derived from this model are therefore nearly constant across observations, which explains why the WLS and OLS coefficient estimates are very similar. The largest shifts are in TS ($-0.000050$ OLS vs $0.001839$ WLS) and WingRatio ($-0.279$ OLS vs $-0.336$ WLS), but neither change is large enough to alter any conclusions from Step 2. The WLS model remains significant overall ($F = 4.00$, $p = 9.50 \times 10^{-5}$) with REB36 as the only predictor clearing the 0.05 threshold ($p = 0.018$). The weighted residual plot does not show improved homoskedasticity, consistent with 
+the finding that variance does not depend linearly on REB36. We conclude that heteroskedasticity driven by REB36 is not a concern in this model, and the OLS estimates from Step 2 remain appropriate.
+
+\qed
+
+
+\problem 
+
+\textit{Proof}.
+```{r}
+# Step 7: Assess Multicollinearity (Topic 16)
+
+library(faraway)
+
+# Pairwise correlation matrix of the predictors and response
+round(cor(draft_college[, c("Age","TS","ASTTOV","REB36","STL36","HS",
+                            "WingRatio","MaxVert","Guard","Wing","WS36")]), 3)
+
+# Eigenvalues of X'_*X_* and condition indices
+x <- model.matrix(draft_model)[, -1]
+e <- eigen(t(x) %*% x)
+e$val
+sqrt(e$val[1] / e$val)
+
+# Variance Inflation Factors
+vif(x)
+
+
+
+```
+
+Interpretation: The full model from Step 2 was highly significant overall (F = 5.742, p = 5.06e-07), with REB/36 (p = 8.86e-06) and MaxVert (p = 0.034) both clearing 0.05 and TS marginal at p = 0.055. While this isn't the textbook significant F with no significant predictors collinearity warning, the fact that most predictors are far from significant despite a strong overall fit still makes multicollinearity worth checking. The pairwise correlation matrix does not show anything alarming. The biggest correlations are Age vs HS at −0.591, REB/36 vs Guard at −0.556, and Guard vs Wing at −0.544. The Age/HS one makes sense because top-25 high school players tend to enter the draft younger, the REB/36 vs Guard one makes sense because guards do not rebound as much as bigs (the reference group), and Guard vs Wing makes sense because those two dummies are mutually exclusive. Nothing comes close to the 0.9 range that would be a real red flag. The eigenvalues span a wide range from about 5.12e+05 down to 0.346, and the condition indices come out to 1.00, 26.84, 36.11, 96.85, 116.00, 123.98, 144.45, 166.66, 284.86, and 1216.07. These are genuinely large, with the maximum condition index of 1216.07 well above the 30 cutoff the lecture uses, and this cannot be fully dismissed. The condition indices do indicate that some collinearity is present in the model. However, the VIFs tell a more reassuring story. Since VIFs are scale-invariant and directly measure how much each coefficient's variance is inflated, they are the more reliable diagnostic here, and every VIF is well below the cutoff of 10 and all are below 5. Guard has the highest VIF at 3.60, which makes sense since guards are mutually exclusive with wings and do not rebound like bigs, but the inflation is mild. So while some collinearity is likely present based on the condition indices, the VIFs suggest it is not severe enough to seriously distort the coefficient estimates. The large condition indices paired with modest VIFs probably reflect the mixed scales of the predictors (Age in years, TS in percent, WingRatio near 1, binary indicators) more than any substantive near-dependence. Overall, with an R² of 32.18% and adjusted R² of 26.58%, a good amount of variation in NBA rookie performance remains unexplained by college stats and combine measurements, but there is no evidence that multicollinearity is the culprit.
+
+\qed
+
+
+\problem 
+
+\textit{Proof}.
+```{r}
+# Step 8
+
+
+```
+
+Interpretation: 
+
+\qed
+
+
+\textit{Proof}.
+```{r}
+# Step 9
+library(dplyr)
+
+#Backward Induction
+
+#Fit the full model
+full <- lm(WS36 ~ Age + MaxVert + WingRatio + Guard + Wing + TS + ASTTOV + REB36 + STL36 + HS, data = draft_college)
+summary(full)
+```
+
+```{r}
+#Subtract TS (Highest p-value)
+g <- update(full, . ~ . - TS)
+summary(g)
+```
+
+```{r}
+#Subtract Guard (Highest p-value)
+g <- update(g, . ~ . - Guard)
+summary(g)
+```
+
+```{r}
+#Subtract STL36 (Highest p-value)
+g <- update(g, . ~ . - STL36)
+summary(g)
+```
+
+```{r}
+#Subtract Wing (Highest p-value)
+g <- update(g, . ~ . - Wing)
+summary(g)
+```
+
+```{r}
+#Subtract HS (Highest p-value)
+g <- update(g, . ~ . - HS)
+summary(g)
+```
+
+```{r}
+#Subtract Age (Highest p-value)
+g <- update(g, . ~ . - Age)
+summary(g)
+```
+
+```{r}
+#Subtract WingRatio (Highest p-value)
+g <- update(g, . ~ . - WingRatio)
+summary(g)
+```
+
+```{r}
+#Subtract MaxVert (Highest p-value)
+g <- update(g, . ~ . - MaxVert)
+summary(g)
+```
+
+```{r}
+#Subtract ASTTOV (Highest p-value)
+g <- update(g, . ~ . - ASTTOV)
+summary(g)
+```
+Interpretation: Using backward elimination, we started off with all predictors and removed on at a time in order of highest p-value: TS, Guard, STL36, Wing, HS, Age, WingRatio, MaxVert, then ASTTOV....
+
+
+```{r}
+#Forward Selection
+
+#Intercept-only model
+model.current <- lm(WS36 ~ 1, data = draft_college)
+
+#Test all single additions
+add1(model.current, ~ Age + MaxVert + Wingspan + Guard + Wing + TS + ASTTOV + REB36 + STL36 + HS, test = "F")
+```
+
+```{r}
+#Add the predictor with the SMALLEST p-value (if < 0.05)
+model.current <- lm(WS36 ~ REB36, data = draft_college)
+add1(model.current, ~ Age + MaxVert + Wingspan + Guard + Wing + TS + ASTTOV + REB36 + STL36 + HS, test = "F")
+```
+Interpretation: 
